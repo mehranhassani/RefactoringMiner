@@ -18,10 +18,13 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 
+import org.apache.commons.io.IOUtils;
 import org.eclipse.jgit.errors.MissingObjectException;
+import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
+import org.eclipse.jgit.treewalk.TreeWalk;
 import org.kohsuke.github.GHCommit;
 import org.kohsuke.github.GHRepository;
 import org.kohsuke.github.GitHub;
@@ -111,6 +114,45 @@ public class GitHistoryRefactoringMinerImpl implements GitHistoryRefactoringMine
 		handler.onFinish(refactoringsCount, commitsCount, errorCommitsCount);
 		logger.info(String.format("Analyzed %s [Commits: %d, Errors: %d, Refactorings: %d]", projectName, commitsCount, errorCommitsCount, refactoringsCount));
 	}
+	
+	public static String getFileContent(RevCommit commit, Repository repo,String fileName) throws Exception {
+		TreeWalk treeWalk  = TreeWalk.forPath( repo, fileName, commit.getTree() );
+		InputStream inputStream = repo.open( treeWalk.getObjectId( 0 ), Constants.OBJ_BLOB ).openStream();
+		treeWalk.close();
+		String output = IOUtils.toString(inputStream, "UTF-8");
+		return output;
+
+	}
+	
+	public UMLModel[] getUMLModelfromBlobs(File projectFolder, RevCommit commit, Repository repo) throws Exception {
+		GitService gitService = new GitServiceImpl();
+		UMLModel[] UMLs = new UMLModel[2];
+		List<String> filesBefore = new ArrayList<String>();
+		List<String> filesCurrent = new ArrayList<String>();
+		Map<String, String> renamedFilesHint = new HashMap<String, String>();
+		gitService.fileTreeDiff(repo, commit, filesBefore, filesCurrent, renamedFilesHint, true);
+		List<String> newFilesContent = new ArrayList<String>();
+		List<String> oldFilesContent = new ArrayList<String>();
+		if(!filesCurrent.isEmpty() && !filesBefore.isEmpty()){
+			for (String file: filesCurrent){
+				String content = getFileContent(commit, repo, file);
+				newFilesContent.add(content);
+			}
+			for (String file: filesBefore){
+				String content = getFileContent(commit.getParent(0), repo, file);
+				oldFilesContent.add(content);
+			}
+			UMLs[1] = new UMLModelASTReader(projectFolder, filesCurrent, newFilesContent).getUmlModel();
+			logger.info("UML model is ready for {}", commit.toString());
+			
+			UMLs[0] = new UMLModelASTReader(projectFolder, filesBefore, oldFilesContent).getUmlModel();
+			logger.info("UML model is ready for {}", commit.getParent(0).toString());
+			
+		}
+
+		return UMLs;
+
+	}
 
 	protected List<Refactoring> detectRefactorings(GitService gitService, Repository repository, final RefactoringHandler handler, File projectFolder, RevCommit currentCommit) throws Exception {
 		List<Refactoring> refactoringsAtRevision;
@@ -122,14 +164,10 @@ public class GitHistoryRefactoringMinerImpl implements GitHistoryRefactoringMine
 		// If no java files changed, there is no refactoring. Also, if there are
 		// only ADD's or only REMOVE's there is no refactoring
 		if (!filesBefore.isEmpty() && !filesCurrent.isEmpty()) {
-			// Checkout and build model for current commit
-			gitService.checkout(repository, commitId);
-			UMLModel currentUMLModel = createModel(projectFolder, filesCurrent);
 			
-			// Checkout and build model for parent commit
-			String parentCommit = currentCommit.getParent(0).getName();
-			gitService.checkout(repository, parentCommit);
-			UMLModel parentUMLModel = createModel(projectFolder, filesBefore);
+			UMLModel[] umlModels = getUMLModelfromBlobs(projectFolder, currentCommit, repository);
+			UMLModel parentUMLModel = umlModels[0];
+			UMLModel currentUMLModel = umlModels[1];
 			
 			// Diff between currentModel e parentModel
 			refactoringsAtRevision = parentUMLModel.diff(currentUMLModel, renamedFilesHint).getRefactorings();
@@ -236,7 +274,7 @@ public class GitHistoryRefactoringMinerImpl implements GitHistoryRefactoringMine
 		};
 		RevWalk walk = gitService.createAllRevsWalk(repository, branch);
 		try {
-			detect(gitService, repository, handler, walk.iterator());
+ 			detect(gitService, repository, handler, walk.iterator());
 		} finally {
 			walk.dispose();
 		}

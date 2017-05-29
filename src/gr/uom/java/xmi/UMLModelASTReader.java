@@ -11,6 +11,7 @@ import java.util.regex.Matcher;
 import javax.swing.tree.DefaultMutableTreeNode;
 import javax.swing.tree.TreeNode;
 
+import org.eclipse.core.runtime.NullProgressMonitor;
 import org.eclipse.jdt.core.JavaCore;
 import org.eclipse.jdt.core.dom.AST;
 import org.eclipse.jdt.core.dom.ASTNode;
@@ -47,6 +48,10 @@ public class UMLModelASTReader {
 	public UMLModelASTReader(File rootFolder, List<String> javaFiles) {
 		this(rootFolder, buildAstParser(rootFolder), javaFiles);
 	}
+	
+	public UMLModelASTReader(File rootFolder, List<String> javaFiles, List<String> javaFilesSources) {
+		this(rootFolder, buildAstParser(rootFolder), javaFiles, javaFilesSources);
+	}
 
 	public UMLModelASTReader(File rootFolder, ASTParser parser, List<String> javaFiles) {
 		this.umlModel = new UMLModel();
@@ -67,6 +72,22 @@ public class UMLModelASTReader {
 			}
 		};
 		this.parser.createASTs((String[]) filesArray, null, emptyArray, fileASTRequestor, null);
+	}
+	
+	public UMLModelASTReader(File rootFolder, ASTParser parser, List<String> javaFiles, List<String> javaFilesSources) {
+		this.umlModel = new UMLModel();
+		this.projectRoot = rootFolder.getPath();
+		this.parser = parser;
+		
+		for (int i = 0; i < javaFiles.size(); i++) {
+			String javaFilePath = javaFiles.get(i);
+			String javaFileSource = javaFilesSources.get(i);
+			this.parser.setSource(javaFileSource.toCharArray());
+			CompilationUnit ast = (CompilationUnit)this.parser.createAST(new NullProgressMonitor());
+			String relativePath = javaFilePath.substring(projectRoot.length() + 1).replaceAll(systemFileSeparator, "/");
+			processCompilationUnit(relativePath, ast);
+		}
+		
 	}
 
 	private static ASTParser buildAstParser(File srcFolder) {
